@@ -114,3 +114,12 @@ export async function lookupPaymentHistory(vendorId: string): Promise<PaymentRow
   `;
   return rows.map(mapRow);
 }
+
+/** Records the on-chain outcome of a payment after src/lib/solana/signer.executePayment runs. */
+export async function updatePaymentTx(paymentId: string, update: { txSignature: string; txStatus: TxStatus }): Promise<void> {
+  const sql = getDb();
+  await sql`
+    UPDATE payments SET tx_signature = ${update.txSignature}, tx_status = ${update.txStatus}
+    WHERE payment_id = ${paymentId}
+  `;
+}

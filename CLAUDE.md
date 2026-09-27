@@ -33,7 +33,7 @@ npm run db:seed          # seed vendors + ~90 days history + E1-E8 inbox; refres
 npm run chain:setup      # idempotent — run 1 generates wallets + waits for faucet funding, run 2 mints
 npm run chain:balances   # print SOL + mUSDC for all six demo wallets
 npm run demo:reset       # sweep mUSDC to treasury, clear non-history rows, refresh caggs
-npm run agent -- --mode naive|guarded --pack demo   # run the AP agent standalone
+npm run agent -- --mode naive --pack demo   # colorized trace + summary table; guarded mode throws until Prompt 5
 npm run eval              # score both modes against expected outcomes
 npm run shots             # capture demo screenshots (UI prompts)
 ```
@@ -44,21 +44,22 @@ npm run shots             # capture demo screenshots (UI prompts)
 src/app/                 routes + API routes (App Router)
 src/components/          UI components (Prompt 7+)
 src/lib/agent/           AP agent — SPEC.md §7. Imports ONLY src/lib/pipeline.
-src/lib/pipeline/        submitPayment(intent, mode) — naive -> signer, guarded -> gateway. §3
+src/lib/pipeline/        submitPayment(intent, mode) — naive -> signer (live), guarded -> gateway (TODO). §3
+src/lib/runs/            startRun() — creates a runs row, drives the agent, async-iterator of events. §3,§10
 src/lib/countersign/     gateway.ts, policy.ts (pure), signals/*.ts, provenance/hiddenText/
                          lookalike/classifier.ts. §3, §8
 src/lib/auth0/           client.ts (Auth0Client), session.ts, ciba.ts. §9
 src/proxy.ts             Next 16 proxy — protects every route except /api/health. §9
 src/lib/solana/          connection/wallets/signer/balances/memo/explorer.ts.
                          signer.ts is the ONLY place any *_SECRET_KEY is read. §6
-src/lib/db/              client.ts, events.ts (append-only), queries/*.ts. §5
+src/lib/db/              client.ts, events.ts (append-only, via runs/eventBus), queries/*.ts. §5
 db/migrations/           raw SQL, applied in filename order
 data/scenarios/          demo.json (and later, Attack Lab packs). §2
 data/wallets.json        committed — public keys only, written by chain-setup. §6
 scripts/                 doctor, auth0-setup, ciba-test, db-migrate, db-seed, chain-setup,
                          chain-balances, demo-reset, run-agent, eval, shots
 docs/PROGRESS.md         checklist + decisions/versions log — update every prompt
-tests/                   vitest — agent-isolation.test.ts, policy.test.ts (E1-E8), etc.
+tests/                   vitest — agent-isolation, honesty-guard, ciba, policy.test.ts (E1-E8), etc.
 ```
 
 ## Before working on X, read SPEC section Y

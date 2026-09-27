@@ -428,6 +428,54 @@ async function checkSolana(): Promise<void> {
   }
 }
 
+/**
+ * One-email (E1 only) dry run: exercises the real system prompt + real tool
+ * schemas + a real model call, with chain and DB writes simulated (no
+ * payment insert, no signer, no agent_events rows) — see
+ * src/lib/agent/tools.ts's `simulate` flag. Verifies the agent/tool-calling
+ * contract actually works without costing a real payment or polluting
+ * Tiger Data on every `npm run doctor`.
+ */
+async function checkAgentDryRun(): Promise<void> {
+  const model = process.env.AGENT_MODEL;
+  if (!model) {
+    report("FAIL", "Agent dry run (E1, chain simulated)", "AGENT_MODEL is not set");
+    return;
+  }
+  try {
+    const { generateText, hasToolCall, stepCountIs } = await import("ai");
+    const { anthropic } = await import("@ai-sdk/anthropic");
+    const { SYSTEM_PROMPT } = await import("../src/lib/agent");
+    const { buildAgentTools } = await import("../src/lib/agent/tools");
+
+    const tools = buildAgentTools({ runId: "doctor-dry-run", mode: "naive", pack: "demo", simulate: true });
+
+    const result = await generateText({
+      model: anthropic(model),
+      system: SYSTEM_PROMPT,
+      prompt: 'Begin processing the inbox. Only email id "e1" needs to be handled in this session — process it, then call finish.',
+      tools,
+      stopWhen: [stepCountIs(6), hasToolCall("finish")],
+      temperature: 0,
+    });
+
+    // result.toolCalls is only the *last* step's calls — aggregate across
+    // every step to see the full tool-call trace for this run.
+    const toolNames = result.steps.flatMap((step) => step.toolCalls.map((call) => call.toolName));
+    const paidInvoice = toolNames.includes("pay_invoice");
+    const calledFinish = toolNames.includes("finish");
+    report(
+      paidInvoice && calledFinish ? "PASS" : "FAIL",
+      "Agent dry run (E1, chain simulated)",
+      paidInvoice && calledFinish
+        ? `tool calls: ${toolNames.join(", ")}`
+        : `expected pay_invoice + finish, got: ${toolNames.join(", ") || "none"}`,
+    );
+  } catch (error) {
+    report("FAIL", "Agent dry run (E1, chain simulated)", error instanceof Error ? error.message : String(error));
+  }
+}
+
 async function main(): Promise<void> {
   console.log("Countersign doctor\n");
 
@@ -455,6 +503,7 @@ async function main(): Promise<void> {
   checkApproverGuardianEnrollment();
   await checkTigerData();
   await checkSolana();
+  await checkAgentDryRun();
 
   console.log(`\n${failCount === 0 ? "All required checks passed." : `${failCount} check(s) failed.`}`);
   process.exit(failCount === 0 ? 0 : 1);
