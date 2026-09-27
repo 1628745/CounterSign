@@ -9,6 +9,8 @@
     "lint": "eslint",
     "test": "vitest run",
     "doctor": "tsx scripts/doctor.ts",
+    "auth0:setup": "tsx scripts/auth0-setup.ts",
+    "test:ciba": "tsx scripts/ciba-test.ts",
     "db:migrate": "tsx scripts/db-migrate.ts",
     "db:seed": "tsx scripts/db-seed.ts",
     "chain:setup": "tsx scripts/chain-setup.ts",

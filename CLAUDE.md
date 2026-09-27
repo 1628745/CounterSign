@@ -7,8 +7,7 @@ the area it covers — pointers are below.
 ## Stack and versions
 
 - Next.js 16.3.6, App Router, TypeScript strict, `src/` dir, Tailwind v4. Auth runs through
-  `proxy.ts` (Next 16's replacement for `middleware.ts`) once Auth0 is wired up — see
-  docs/PROGRESS.md for why.
+  `src/proxy.ts` (Next 16's replacement for `middleware.ts`) — see docs/PROGRESS.md for why.
 - Vercel AI SDK `ai@6` + `@ai-sdk/anthropic@2`, `zod@4`. `AGENT_MODEL` default
   `claude-haiku-4-5-20251001`, temperature 0.
 - `@auth0/nextjs-auth0@4` (Universal Login + CIBA over REST).
@@ -17,7 +16,7 @@ the area it covers — pointers are below.
 - `@solana/web3.js@1` + `@solana/spl-token`, devnet only, never mainnet.
 - `cheerio` (hidden-text/HTML parsing), `fastest-levenshtein` (lookalike domains), `jose` (JWT
   verification), `bs58`, `tsx` + `vitest` for scripts/tests.
-- UI component libraries are added in Prompt 6 — don't add them early.
+- UI component libraries are added in Prompt 7 — don't add them early.
 
 ## Commands
 
@@ -27,6 +26,8 @@ npm run build / start    # production build / serve
 npm run lint             # eslint
 npm test                 # vitest run
 npm run doctor           # environment/health checks — run this after any env change
+npm run auth0:setup      # idempotent Auth0 tenant setup (app, API, CIBA grant, Guardian push)
+npm run test:ciba        # sends a real CIBA push to APPROVER_SUB; exit 0/2/3 = approved/denied/expired
 npm run db:migrate       # apply db/migrations/*.sql (Tiger Data prompt)
 npm run db:seed          # seed ~90 days of vendor history (Tiger Data prompt)
 npm run chain:setup      # generate devnet wallets + mUSDC mint (Solana prompt)
@@ -41,20 +42,21 @@ npm run shots             # capture demo screenshots (UI prompts)
 
 ```
 src/app/                 routes + API routes (App Router)
-src/components/          UI components (Prompt 6+)
+src/components/          UI components (Prompt 7+)
 src/lib/agent/           AP agent — SPEC.md §7. Imports ONLY src/lib/pipeline.
 src/lib/pipeline/        submitPayment(intent, mode) — naive -> signer, guarded -> gateway. §3
 src/lib/countersign/     gateway.ts, policy.ts (pure), signals/*.ts, provenance/hiddenText/
                          lookalike/classifier.ts. §3, §8
-src/lib/auth0/           session.ts, ciba.ts. §9
+src/lib/auth0/           client.ts (Auth0Client), session.ts, ciba.ts. §9
+src/proxy.ts             Next 16 proxy — protects every route except /api/health. §9
 src/lib/solana/          connection/wallets/signer/balances/memo/explorer.ts.
                          signer.ts is the ONLY place TREASURY_SECRET_KEY is read. §6
 src/lib/db/              client.ts, events.ts (append-only), queries/*.ts. §5
 db/migrations/           raw SQL, applied in filename order
 data/scenarios/          demo.json (and later, Attack Lab packs). §2
 data/wallets.json        committed — public keys only, written by chain-setup. §6
-scripts/                 doctor, db-migrate, db-seed, chain-setup, chain-balances,
-                         demo-reset, run-agent, eval, shots
+scripts/                 doctor, auth0-setup, ciba-test, db-migrate, db-seed, chain-setup,
+                         chain-balances, demo-reset, run-agent, eval, shots
 docs/PROGRESS.md         checklist + decisions/versions log — update every prompt
 tests/                   vitest — agent-isolation.test.ts, policy.test.ts (E1-E8), etc.
 ```
@@ -64,7 +66,7 @@ tests/                   vitest — agent-isolation.test.ts, policy.test.ts (E1-
 - Agent tools/system prompt → §7. Pipeline routing → §3.
 - Policy scoring, signals, hard blocks, thresholds → §8. Demo inbox (E1-E8) → §2.
 - Tiger Data schema/migrations/seeding → §5. Solana wallets/mint/memo/signer → §6.
-- Auth0 login + CIBA flow → §9. Events + API routes → §10. UI views → §11 (Prompt 6+ only).
+- Auth0 login + CIBA flow → §9. Events + API routes → §10. UI views → §11 (Prompt 7+ only).
 
 ## Non-negotiables (SPEC.md §14) — do not violate these
 
