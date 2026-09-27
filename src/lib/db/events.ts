@@ -1,3 +1,5 @@
+import { getDb } from "./client";
+
 export type AgentEventKind =
   | "run_started"
   | "email_read"
@@ -28,10 +30,26 @@ export interface AgentEventInput {
  * must persist its agent_events row to Tiger Data BEFORE it is emitted to
  * the UI (e.g. over SSE). See SPEC.md sections 3, 5 and 10.
  *
- * TODO(tiger data prompt): implement, assigning a monotonically increasing
- * `seq` per run_id.
+ * seq is assigned inside a transaction holding a per-run advisory lock, so
+ * concurrent writers for the same run_id (e.g. a tool call and its result
+ * landing close together) still get a gap-free, monotonically increasing
+ * sequence instead of racing on max(seq)+1.
  */
-export async function appendEvent(event: AgentEventInput): Promise<void> {
-  void event;
-  throw new Error("TODO: implement appendEvent — see SPEC.md section 10");
+export async function appendEvent(event: AgentEventInput): Promise<{ seq: bigint }> {
+  const sql = getDb();
+  const seq = await sql.begin(async (tx) => {
+    await tx`SELECT pg_advisory_xact_lock(hashtextextended(${event.runId}, 0))`;
+    const [{ nextSeq }] = await tx<{ nextSeq: string }[]>`
+      SELECT coalesce(max(seq), 0) + 1 AS "nextSeq" FROM agent_events WHERE run_id = ${event.runId}
+    `;
+    await tx`
+      INSERT INTO agent_events (run_id, seq, kind, email_id, payment_id, payload)
+      VALUES (
+        ${event.runId}, ${nextSeq}, ${event.kind},
+        ${event.emailId ?? null}, ${event.paymentId ?? null}, ${JSON.stringify(event.payload)}::jsonb
+      )
+    `;
+    return BigInt(nextSeq);
+  });
+  return { seq };
 }

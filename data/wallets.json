@@ -1,3 +1,12 @@
 {
-  "_todo": "Populated by scripts/chain-setup.ts with public keys only (SPEC.md section 6). Never put secret keys here."
+  "treasury": "Ezh99dG1iR3xoNLp4TbeYDoZPCYPFkqtKhVozhhFHEnu",
+  "vendors": {
+    "blueRidge": "9mLeKEeYNWKgBqs8J9xfLkhd66L9kHoxXNaYrXLguuXz",
+    "chesapeake": "Gv13pB1C3Re6ceUjyT5fmbW3uiPdMhFPuYkfModPiBGQ",
+    "colonial": "3g8KJmZKd7WEpLvLnyjVaicHJ2ThUToNrJXQHitqxpZ5"
+  },
+  "attackers": {
+    "attackerA": "HDiDofRgULTe2deu2YF3BEWintJrCKTHzNcvdW6nRQdn",
+    "attackerB": "5K1JnXtnv54ornPNKrXYE5WTWWphiUgy8cvJ754xUyM2"
+  }
 }

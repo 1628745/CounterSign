@@ -44,16 +44,20 @@ const AUTH0_VARS: Record<string, string> = {
   AUTH0_AUDIENCE: "run `npm run auth0:setup`",
 };
 
-/** Vars deferred to later prompts — reported as SKIP with a hint, not FAIL. */
-const DEFERRED_VARS: Record<string, string> = {
-  DATABASE_URL: "provision via `tiger service_create`/MCP, then run npm run db:migrate",
-  MUSDC_MINT: "set by npm run chain:setup in the Solana prompt",
-  TREASURY_SECRET_KEY: "set by npm run chain:setup in the Solana prompt",
-  VENDOR_BLUERIDGE_SECRET_KEY: "set by npm run chain:setup in the Solana prompt",
-  VENDOR_CHESAPEAKE_SECRET_KEY: "set by npm run chain:setup in the Solana prompt",
-  VENDOR_COLONIAL_SECRET_KEY: "set by npm run chain:setup in the Solana prompt",
-  ATTACKER_A_SECRET_KEY: "set by npm run chain:setup in the Solana prompt",
-  ATTACKER_B_SECRET_KEY: "set by npm run chain:setup in the Solana prompt",
+/** Tiger Data var set by provisioning the service + npm run db:migrate. */
+const TIGER_VARS: Record<string, string> = {
+  DATABASE_URL: "provision via `tiger service create`/MCP, then run npm run db:migrate",
+};
+
+/** Solana vars set by `npm run chain:setup`. */
+const SOLANA_VARS: Record<string, string> = {
+  MUSDC_MINT: "run `npm run chain:setup`",
+  TREASURY_SECRET_KEY: "run `npm run chain:setup`",
+  VENDOR_BLUERIDGE_SECRET_KEY: "run `npm run chain:setup`",
+  VENDOR_CHESAPEAKE_SECRET_KEY: "run `npm run chain:setup`",
+  VENDOR_COLONIAL_SECRET_KEY: "run `npm run chain:setup`",
+  ATTACKER_A_SECRET_KEY: "run `npm run chain:setup`",
+  ATTACKER_B_SECRET_KEY: "run `npm run chain:setup`",
 };
 
 function checkCoreEnvVars(): void {
@@ -85,13 +89,13 @@ function checkAuth0EnvVars(): void {
   }
 }
 
-function checkDeferredEnvVars(): void {
-  for (const [name, hint] of Object.entries(DEFERRED_VARS)) {
+function checkVarGroup(vars: Record<string, string>): void {
+  for (const [name, hint] of Object.entries(vars)) {
     const value = process.env[name];
     if (value && value.length > 0) {
       report("PASS", `env ${name} present (${mask(value)})`);
     } else {
-      report("SKIP", `env ${name} not set yet`, hint);
+      report("FAIL", `env ${name} missing`, hint);
     }
   }
 }
@@ -261,9 +265,167 @@ function checkApproverGuardianEnrollment(): void {
   }
 }
 
-function checkDeferredSubsystems(): void {
-  report("SKIP", "Tiger Data connectivity", "implemented in the Tiger Data prompt — will run `select 1` against DATABASE_URL");
-  report("SKIP", "Solana devnet connectivity + wallet balances", "implemented in the Solana prompt — will check getVersion() and treasury balance");
+async function checkTigerData(): Promise<void> {
+  const databaseUrl = process.env.DATABASE_URL;
+  if (!databaseUrl) {
+    report("FAIL", "Tiger Data reachable", "DATABASE_URL is not set");
+    return;
+  }
+
+  const postgres = (await import("postgres")).default;
+  const sql = postgres(databaseUrl, { max: 1 });
+  try {
+    await sql`SELECT 1`;
+    report("PASS", "Tiger Data reachable");
+  } catch (error) {
+    report("FAIL", "Tiger Data reachable", error instanceof Error ? error.message : String(error));
+    await sql.end();
+    return;
+  }
+
+  try {
+    const rows = await sql<{ extversion: string }[]>`SELECT extversion FROM pg_extension WHERE extname = 'timescaledb'`;
+    if (rows[0]?.extversion) {
+      report("PASS", `TimescaleDB extension present (v${rows[0].extversion})`);
+    } else {
+      report("FAIL", "TimescaleDB extension present", "extension not found — is this a plain Postgres service?");
+    }
+  } catch (error) {
+    report("FAIL", "TimescaleDB extension present", error instanceof Error ? error.message : String(error));
+  }
+
+  try {
+    const rows = await sql<{ hypertable_name: string }[]>`SELECT hypertable_name FROM timescaledb_information.hypertables`;
+    const names = new Set(rows.map((r) => r.hypertable_name));
+    const expected = ["payments", "risk_evaluations", "vendor_detail_changes", "agent_events"];
+    const missing = expected.filter((n) => !names.has(n));
+    report(
+      missing.length === 0 ? "PASS" : "FAIL",
+      `Hypertables exist (${expected.join(", ")})`,
+      missing.length === 0 ? undefined : `missing: ${missing.join(", ")} — run npm run db:migrate`,
+    );
+  } catch (error) {
+    report("FAIL", "Hypertables exist", error instanceof Error ? error.message : String(error));
+  }
+
+  try {
+    const rows = await sql<{ view_name: string }[]>`SELECT view_name FROM timescaledb_information.continuous_aggregates`;
+    const names = new Set(rows.map((r) => r.view_name));
+    const expected = ["vendor_spend_daily", "spend_by_minute"];
+    const missing = expected.filter((n) => !names.has(n));
+    report(
+      missing.length === 0 ? "PASS" : "FAIL",
+      `Continuous aggregates exist (${expected.join(", ")})`,
+      missing.length === 0 ? undefined : `missing: ${missing.join(", ")} — run npm run db:migrate`,
+    );
+  } catch (error) {
+    report("FAIL", "Continuous aggregates exist", error instanceof Error ? error.message : String(error));
+  }
+
+  try {
+    const [vendors, notes, emails, history] = await Promise.all([
+      sql<{ count: string }[]>`SELECT count(*) FROM vendors`,
+      sql<{ count: string }[]>`SELECT count(*) FROM vendor_notes`,
+      sql<{ count: string }[]>`SELECT count(*) FROM inbox_emails WHERE pack = 'demo'`,
+      sql<{ count: string }[]>`SELECT count(*) FROM payments WHERE mode = 'history'`,
+    ]);
+    const counts = {
+      vendors: Number(vendors[0].count),
+      vendorNotes: Number(notes[0].count),
+      demoEmails: Number(emails[0].count),
+      historyPayments: Number(history[0].count),
+    };
+    const looksRight = counts.vendors === 3 && counts.vendorNotes === 3 && counts.demoEmails === 8 && counts.historyPayments > 0;
+    report(
+      looksRight ? "PASS" : "FAIL",
+      `Row counts look right (vendors=${counts.vendors} vendor_notes=${counts.vendorNotes} demo_emails=${counts.demoEmails} history_payments=${counts.historyPayments})`,
+      looksRight ? undefined : "run npm run db:seed",
+    );
+  } catch (error) {
+    report("FAIL", "Row counts look right", error instanceof Error ? error.message : String(error));
+  }
+
+  await sql.end();
+}
+
+// Well-known public devnet genesis hash — confirms "cluster is devnet" beyond just the URL string.
+const DEVNET_GENESIS_HASH = "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG";
+
+async function checkSolana(): Promise<void> {
+  const rpcUrl = process.env.SOLANA_RPC_URL;
+  if (!rpcUrl) {
+    report("FAIL", "Solana RPC reachable", "SOLANA_RPC_URL is not set");
+    return;
+  }
+
+  const { Connection, Keypair, PublicKey, LAMPORTS_PER_SOL } = await import("@solana/web3.js");
+  const connection = new Connection(rpcUrl, "confirmed");
+
+  try {
+    const version = await connection.getVersion();
+    report("PASS", `Solana RPC reachable (solana-core ${version["solana-core"]})`);
+  } catch (error) {
+    report("FAIL", "Solana RPC reachable", error instanceof Error ? error.message : String(error));
+    return;
+  }
+
+  try {
+    const genesisHash = await connection.getGenesisHash();
+    report(
+      genesisHash === DEVNET_GENESIS_HASH ? "PASS" : "FAIL",
+      "Cluster is devnet",
+      genesisHash === DEVNET_GENESIS_HASH ? undefined : `genesis hash ${genesisHash} does not match the known devnet genesis`,
+    );
+  } catch (error) {
+    report("FAIL", "Cluster is devnet", error instanceof Error ? error.message : String(error));
+  }
+
+  const treasurySecret = process.env.TREASURY_SECRET_KEY;
+  if (!treasurySecret) {
+    report("FAIL", "Treasury has SOL for fees", "TREASURY_SECRET_KEY is not set");
+  } else {
+    try {
+      const bs58 = (await import("bs58")).default;
+      const treasury = Keypair.fromSecretKey(bs58.decode(treasurySecret));
+      const lamports = await connection.getBalance(treasury.publicKey);
+      const sol = lamports / LAMPORTS_PER_SOL;
+      report(sol > 0.01 ? "PASS" : "FAIL", `Treasury has SOL for fees (${sol.toFixed(4)} SOL)`, sol > 0.01 ? undefined : "fund via https://faucet.solana.com/");
+    } catch (error) {
+      report("FAIL", "Treasury has SOL for fees", error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  const mintAddress = process.env.MUSDC_MINT;
+  if (!mintAddress) {
+    report("FAIL", "mUSDC mint exists", "MUSDC_MINT is not set");
+  } else {
+    try {
+      const info = await connection.getAccountInfo(new PublicKey(mintAddress));
+      report(info ? "PASS" : "FAIL", `mUSDC mint exists (${mintAddress})`, info ? undefined : "run npm run chain:setup");
+    } catch (error) {
+      report("FAIL", "mUSDC mint exists", error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  if (mintAddress) {
+    try {
+      const { loadWalletDirectory, flattenWalletDirectory } = await import("../src/lib/solana/wallets");
+      const { getAssociatedTokenAddressSync } = await import("@solana/spl-token");
+      const flat = flattenWalletDirectory(loadWalletDirectory());
+      const mint = new PublicKey(mintAddress);
+      const entries = Object.entries(flat);
+      const atas = entries.map(([, addr]) => getAssociatedTokenAddressSync(mint, new PublicKey(addr)));
+      const infos = await connection.getMultipleAccountsInfo(atas);
+      const missing = entries.filter((_, i) => !infos[i]).map(([key]) => key);
+      report(
+        missing.length === 0 ? "PASS" : "FAIL",
+        "All token accounts exist",
+        missing.length === 0 ? undefined : `missing ATAs for: ${missing.join(", ")} — run npm run chain:setup`,
+      );
+    } catch (error) {
+      report("FAIL", "All token accounts exist", error instanceof Error ? error.message : String(error));
+    }
+  }
 }
 
 async function main(): Promise<void> {
@@ -278,8 +440,11 @@ async function main(): Promise<void> {
   console.log("\n-- Auth0 env vars --");
   checkAuth0EnvVars();
 
-  console.log("\n-- deferred env vars (Tiger Data / Solana) --");
-  checkDeferredEnvVars();
+  console.log("\n-- Tiger Data env vars --");
+  checkVarGroup(TIGER_VARS);
+
+  console.log("\n-- Solana env vars --");
+  checkVarGroup(SOLANA_VARS);
 
   console.log("\n-- live checks --");
   await checkAnthropicKey();
@@ -288,7 +453,8 @@ async function main(): Promise<void> {
   await checkAuth0ClientCredentials();
   checkAuth0CibaConfig();
   checkApproverGuardianEnrollment();
-  checkDeferredSubsystems();
+  await checkTigerData();
+  await checkSolana();
 
   console.log(`\n${failCount === 0 ? "All required checks passed." : `${failCount} check(s) failed.`}`);
   process.exit(failCount === 0 ? 0 : 1);

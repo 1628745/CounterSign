@@ -16,21 +16,25 @@ Prompt 1 checkpoint). Each prompt ends with the checkpoint protocol in SPEC.md �
       (Universal Login, every route protected except `/api/health`), `src/lib/auth0/ciba.ts`
       (initiate/poll/verify per SPEC.md §9), `scripts/ciba-test.ts`, Auth0 doctor checks. **Real
       end-to-end CIBA push round-trip verified on the approver's phone — see Decisions below.**
-- [ ] **Prompt 3 — Tiger Data.** Raw SQL migrations for the full schema (SPEC.md §5): vendors,
+- [x] **Prompt 3 — Tiger Data.** Raw SQL migrations for the full schema (SPEC.md §5): vendors,
       vendor_notes, inbox_emails, runs, approvals, eval_results, and the payments/
       risk_evaluations/vendor_detail_changes/agent_events hypertables, plus the
       vendor_spend_daily/spend_by_minute continuous aggregates, compression policy, and indexes.
-      `db:migrate` + `db:seed` (≈90 days vendor history incl. INV-BR-4388 paid 6 days ago).
-      `db/client.ts`, `db/events.ts`, `db/queries/*.ts` implemented. Doctor's Tiger Data check
-      goes from SKIP to a real `select 1`.
-- [ ] **Prompt 4 — Solana (devnet).** `chain-setup.ts` (treasury/vendor/attacker wallets, mUSDC
-      mint, ATAs), `data/wallets.json` populated, `src/lib/solana/*` implemented
+      `db:migrate` + `db:seed` (≈90 days vendor history incl. INV-BR-4388 paid 6 days ago, plus the
+      E1-E8 demo inbox written as realistic HTML). `db/client.ts`, `db/events.ts`,
+      `db/queries/*.ts` (incl. the six named policy queries) implemented. Doctor's Tiger Data
+      checks are real (`select 1`, extension, hypertables, caggs, row counts).
+- [x] **Prompt 4 — Solana (devnet).** `chain-setup.ts` (treasury/vendor/attacker wallets, mUSDC
+      mint, ATAs) — idempotent, ran twice with a real faucet funding step in between.
+      `data/wallets.json` populated, `src/lib/solana/*` implemented
       (connection/wallets/signer/balances/memo/explorer), `chain-balances.ts`, `demo-reset.ts`.
-      Doctor's Solana check goes from SKIP to real devnet connectivity + balance checks.
+      **Proved end-to-end with a real 1.00 mUSDC devnet payment + memo, verified on-chain, then
+      swept back via demo:reset** — see Decisions below. Doctor's Solana checks are real (RPC,
+      devnet genesis hash, treasury SOL, mint, all ATAs).
 - [ ] **Prompt 5 — Countersign policy engine.** `hiddenText.ts`/`lookalike.ts`/`classifier.ts`
-      detectors, all 12 `signals/*.ts`, `provenance.ts`, `policy.evaluate` (pure), and the E1-E8
-      realistic-HTML demo inbox in `data/scenarios/demo.json`. `tests/policy.test.ts` scenarios
-      filled in and passing (SPEC.md §2, §8).
+      detectors, all 12 `signals/*.ts`, `provenance.ts`, `policy.evaluate` (pure). The E1-E8
+      demo inbox HTML was written early, in Prompt 3, since db:seed needed it — this prompt just
+      consumes it. `tests/policy.test.ts` scenarios filled in and passing (SPEC.md §2, §8).
 - [ ] **Prompt 6 — Agent, pipeline, gateway.** `agent/tools.ts` + `agent/index.ts` (SPEC.md §7),
       `pipeline.submitPayment`, `gateway.submitToGateway` orchestration wired to policy + Tiger
       Data + the signer + the already-built `ciba.ts`, `/api/approvals/poll`. `run-agent.ts`
@@ -77,9 +81,10 @@ Prompt 1 checkpoint). Each prompt ends with the checkpoint protocol in SPEC.md �
   a handful of moderate/high `npm audit` advisories, mostly from `@solana/web3.js@1.x`'s older
   transitive deps (a known, long-standing situation for that package's 1.x line). Not fixed with
   `npm audit fix --force` because that would silently swap pinned majors; revisit if time allows.
-- **Tiger Cloud service already provisioned**: `tiger service_list` (MCP) shows one DEV
-  TimescaleDB service (`db-90364`, `us-east-1`, READY) already exists in this environment. Prompt 3
-  will fetch its connection string for `DATABASE_URL` rather than provisioning a new one.
+- **Tiger Cloud service note (superseded in Prompt 3)**: at Prompt 1 time, `tiger service_list`
+  showed one pre-existing DEV service (`db-90364`). Prompt 3 created a dedicated new service named
+  `countersign` instead (per that prompt's explicit instruction) — see Prompt 3 decisions below.
+  `db-90364` was left untouched.
 - **Two small config fixes made during Prompt 1 verification**, both cosmetic/non-functional:
   `vitest.config.ts` → `vitest.config.mts` (Vite's config loader tried to `require()` an ESM
   transitive dep and failed under the plain `.ts` extension since this package isn't
@@ -137,3 +142,93 @@ Prompt 1 checkpoint). Each prompt ends with the checkpoint protocol in SPEC.md �
   guardian-push channel on the client, tenant Guardian push factor, and approver Guardian
   enrollment status — the last two shell out to the `auth0` CLI and SKIP (not FAIL) if it's
   unavailable/logged out, since that's a local tooling gap, not a Countersign config problem.
+
+### Prompt 3 — Tiger Data
+
+- **New dedicated Tiger Cloud service, `countersign`** (id `cij1r2aa11`, shared/shared CPU-memory,
+  `us-east-1`, DEV), created via `mcp__tiger__service_create` as instructed. The connection string
+  (with password) was fetched via `tiger service get <id> --with-password -o env`, redirected
+  straight to a temp file and assembled into `DATABASE_URL` by a Python one-liner — the password
+  never appeared in any command output or message, only in `.env.local` (non-negotiable #6). The
+  temp file was deleted immediately after.
+- **Current TimescaleDB syntax (v2.30.1 on this service)**, confirmed via `search_docs` before
+  writing SQL (non-negotiable #8): `SELECT create_hypertable('table', by_range('col'))` (the
+  current interface, not the deprecated 2-arg old interface); `add_columnstore_policy()` for the
+  agent_events compression policy — `add_compression_policy()` is deprecated since 2.18.0;
+  continuous aggregates created `WITH NO DATA` (avoids the documented "watermark in the future"
+  pitfall) and refreshed manually after seeding via `CALL refresh_continuous_aggregate(cagg, NULL,
+  NULL)`.
+- **`spend_by_minute` is real-time (`materialized_only = false`), `vendor_spend_daily` is not** —
+  matches SPEC.md §5 literally (only spend_by_minute is called out as needing real-time for live
+  charts). Confirmed both via `db_schema`.
+- **`vendorSpendToday` (one of the six named policy queries) reads the raw `payments` table, not
+  `vendor_spend_daily`.** That cagg's refresh policy has `end_offset => INTERVAL '1 day'`, which
+  deliberately excludes today's bucket from materialization — reading it for "spend today" would
+  always be stale/empty. `vendorMaxDaily90d` does read the cagg, correctly, since it only needs
+  *past* days.
+- **"Successful payment" is `mode = 'history' OR tx_status = 'confirmed'`**, used consistently in
+  the `vendor_spend_daily` definition and all six policy queries — a seeded history row has no
+  real transaction, but is still a real past payment; a live guarded/naive payment only counts
+  once its on-chain transfer actually confirmed.
+- **Six named policy queries** (`vendorMedian90d`, `vendorMaxDaily90d`, `vendorSpendToday`,
+  `hasSuccessfulPaymentTo`, `isDuplicateInvoice`, `recentUnverifiedChange`) live in
+  `src/lib/db/queries/policyQueries.ts`, each returning `{ name, sql, params, result }` so the
+  policy engine (Prompt 5) can attach the query name + result as evidence on a signal, and the
+  "Under the Hood" UI (Prompt 8) can show the exact SQL that ran.
+- **`appendEvent`'s monotonic `seq`** is assigned inside `sql.begin()` holding a per-run
+  `pg_advisory_xact_lock(hashtextextended(run_id, 0))`, not just `max(seq)+1` unguarded — cheap
+  insurance against two near-simultaneous writes for the same run racing.
+- **E1-E8 demo inbox HTML written now** (data/scenarios/demo.json), earlier than the policy-engine
+  prompt originally planned, because `db:seed` needed real content to load. Verified E5's hidden
+  `<span style="display:none">` is both (a) present in the raw HTML a naive `.text()` extraction
+  would still include, matching SPEC.md §7's "read_email renders plain text INCLUDING hidden text"
+  and (b) genuinely invisible to a real renderer — checked with cheerio directly.
+- **History generation**: a backward-walk generator anchored at the *most recent* invoice
+  (date/number exact, amount jittered within range) that decrements the invoice number and jitters
+  cadence going back 90 days — guarantees Blue Ridge's anchor is exactly `INV-BR-4388` / $2,115.00
+  / 6 days ago (the row E8 must duplicate) while the rest of the history stays randomized/realistic.
+  `db:seed` clears prior seed rows first, so it's safely re-runnable.
+- **tsconfig `target` bumped `ES2017` → `ES2020`** — needed for `0n`/`10n` BigInt literals, which
+  non-negotiable #4 (money as bigint micro-units everywhere) now uses throughout
+  `src/lib/solana/*` and `scripts/chain-*`. Ran into a stale `tsconfig.tsbuildinfo` masking the fix
+  once; deleting it (already gitignored) resolved it.
+
+### Prompt 4 — Solana (devnet)
+
+- **Automated devnet airdrop was attempted first** (`connection.requestAirdrop`) before asking the
+  user to use the faucet — failed with a generic "Internal error," which is the public devnet
+  RPC's normal response to its own airdrop rate-limiting. Fell back to asking the user to fund the
+  treasury via `https://faucet.solana.com/`; they funded it with 5 SOL, well above the ~2 SOL
+  asked for.
+- **`chain-setup.ts` is genuinely two-phase and idempotent**: run 1 generates the six wallets (if
+  missing) and stops once it sees a near-zero treasury balance; run 2+ (after funding) creates the
+  mint/ATAs/mint-to-treasury, each step individually guarded (skips if the mint/ATA/balance already
+  satisfies the target). Verified with a third run reporting everything already done.
+- **`signer.ts` holds every secret-key read, not just the treasury's** — `executePayment` (pays
+  from treasury) and the new `sweepToTreasury` (demo:reset support, vendor/attacker wallets sign
+  their own transfer back to treasury) both live there, since SPEC.md §6/§14 says signer.ts is the
+  *only* file allowed to read any `*_SECRET_KEY`. Re-verified the ESLint restriction with a live
+  negative test: a scratch file under `src/lib/agent/` importing `@/lib/solana/signer` was
+  rejected by `no-restricted-imports` before being deleted.
+- **Balances**: SOL via one batched `getMultipleAccountsInfo`, mUSDC via one batched
+  `getMultipleParsedAccounts` for all six associated token accounts (derived deterministically with
+  `getAssociatedTokenAddressSync`, not read from a file) — two RPC calls total, cached 3s, matching
+  SPEC.md §6.
+- **Proved end-to-end**: inserted a real `payments` row (`mode: guarded`, `decision: auto_pay`,
+  vendor `chesapeake`, 1.00 mUSDC), called `signer.executePayment`, got back a confirmed devnet
+  signature, and independently re-fetched the parsed transaction to confirm the memo instruction's
+  bytes were exactly `countersign:v1|pay=<8 chars>|dec=auto_pay|risk=0|appr=none`. `chain:balances`
+  showed Chesapeake at 1.000000 mUSDC and treasury at 249999.000000. Then ran `demo:reset`: it swept
+  the 1.00 mUSDC back (own explorer link printed), deleted the non-history payment row, and
+  refreshed both caggs — `chain:balances` afterward showed treasury back at exactly 250000.000000
+  and every other wallet at 0. The one-off proof script was deleted; it was not committed.
+- **Known, accepted flakiness**: the public devnet RPC (`api.devnet.solana.com`) returned several
+  `429 Too Many Requests` during `mintTo` and during the test-payment `sendAndConfirmTransaction`;
+  `@solana/web3.js`'s built-in retry/backoff absorbed all of them and every operation still
+  succeeded. If this gets flaky during the live demo, switching `SOLANA_RPC_URL` to a dedicated
+  devnet RPC provider (still devnet, non-negotiable #5 unaffected) is the fix — noted here rather
+  than solved now since it hasn't actually blocked anything yet.
+- **Doctor additions**: RPC reachability + `solana-core` version, cluster identity confirmed
+  against the well-known public devnet genesis hash (not just string-matching the RPC URL),
+  treasury SOL balance, mint existence, and all six ATAs existing — all real checks, no more SKIPs
+  left for either Tiger Data or Solana.

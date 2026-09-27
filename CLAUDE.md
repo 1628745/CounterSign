@@ -28,11 +28,11 @@ npm test                 # vitest run
 npm run doctor           # environment/health checks — run this after any env change
 npm run auth0:setup      # idempotent Auth0 tenant setup (app, API, CIBA grant, Guardian push)
 npm run test:ciba        # sends a real CIBA push to APPROVER_SUB; exit 0/2/3 = approved/denied/expired
-npm run db:migrate       # apply db/migrations/*.sql (Tiger Data prompt)
-npm run db:seed          # seed ~90 days of vendor history (Tiger Data prompt)
-npm run chain:setup      # generate devnet wallets + mUSDC mint (Solana prompt)
-npm run chain:balances   # print demo wallet balances (Solana prompt)
-npm run demo:reset       # sweep balances back to treasury (Solana prompt)
+npm run db:migrate       # apply db/migrations/*.sql (idempotent, tracked in schema_migrations)
+npm run db:seed          # seed vendors + ~90 days history + E1-E8 inbox; refreshes caggs
+npm run chain:setup      # idempotent — run 1 generates wallets + waits for faucet funding, run 2 mints
+npm run chain:balances   # print SOL + mUSDC for all six demo wallets
+npm run demo:reset       # sweep mUSDC to treasury, clear non-history rows, refresh caggs
 npm run agent -- --mode naive|guarded --pack demo   # run the AP agent standalone
 npm run eval              # score both modes against expected outcomes
 npm run shots             # capture demo screenshots (UI prompts)
@@ -50,7 +50,7 @@ src/lib/countersign/     gateway.ts, policy.ts (pure), signals/*.ts, provenance/
 src/lib/auth0/           client.ts (Auth0Client), session.ts, ciba.ts. §9
 src/proxy.ts             Next 16 proxy — protects every route except /api/health. §9
 src/lib/solana/          connection/wallets/signer/balances/memo/explorer.ts.
-                         signer.ts is the ONLY place TREASURY_SECRET_KEY is read. §6
+                         signer.ts is the ONLY place any *_SECRET_KEY is read. §6
 src/lib/db/              client.ts, events.ts (append-only), queries/*.ts. §5
 db/migrations/           raw SQL, applied in filename order
 data/scenarios/          demo.json (and later, Attack Lab packs). §2
