@@ -79,6 +79,27 @@ export async function dueApprovals(): Promise<ApprovalRow[]> {
   return rows.map(mapRow);
 }
 
+/** Advances a pending approval to its resolved state (approved/denied/expired). */
+export async function resolveApproval(
+  id: string,
+  update: { status: "approved" | "denied" | "expired"; tokenFingerprint?: string },
+): Promise<void> {
+  const sql = getDb();
+  await sql`
+    UPDATE approvals
+    SET status = ${update.status}, resolved_at = now(), token_fingerprint = ${update.tokenFingerprint ?? null}
+    WHERE id = ${id}
+  `;
+}
+
+/** Reschedules a still-pending approval's next poll time (e.g. after slow_down backoff). */
+export async function rescheduleApproval(id: string, nextPollAt: Date, intervalS: number): Promise<void> {
+  const sql = getDb();
+  await sql`
+    UPDATE approvals SET next_poll_at = ${nextPollAt}, interval_s = ${intervalS} WHERE id = ${id}
+  `;
+}
+
 /** Used by src/lib/solana/signer.ts to verify a decision = 'approved' payment has a stored, verified approval. */
 export async function getLatestApprovalForPayment(paymentId: string): Promise<ApprovalRow | null> {
   const sql = getDb();

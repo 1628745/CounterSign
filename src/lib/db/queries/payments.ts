@@ -115,6 +115,12 @@ export async function lookupPaymentHistory(vendorId: string): Promise<PaymentRow
   return rows.map(mapRow);
 }
 
+/** Advances a payment's decision after a CIBA approval resolves (approved/denied/expired). */
+export async function updatePaymentDecision(paymentId: string, decision: PaymentDecision): Promise<void> {
+  const sql = getDb();
+  await sql`UPDATE payments SET decision = ${decision} WHERE payment_id = ${paymentId}`;
+}
+
 /** Records the on-chain outcome of a payment after src/lib/solana/signer.executePayment runs. */
 export async function updatePaymentTx(paymentId: string, update: { txSignature: string; txStatus: TxStatus }): Promise<void> {
   const sql = getDb();

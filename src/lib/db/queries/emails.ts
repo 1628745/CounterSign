@@ -46,6 +46,16 @@ export async function listInboxEmails(pack: string): Promise<InboxEmailSummary[]
   return rows.map(mapSummary);
 }
 
+/** Every email in a pack, with html — backs provenance's cross-inbox scan. */
+export async function listFullInboxEmails(pack: string): Promise<InboxEmail[]> {
+  const sql = getDb();
+  const rows = await sql<EmailDbRow[]>`
+    SELECT id, pack, "position", from_name, from_address, subject, html, received_at
+    FROM inbox_emails WHERE pack = ${pack} ORDER BY "position" ASC
+  `;
+  return rows.map((row) => ({ ...mapSummary(row), pack: row.pack, html: row.html }));
+}
+
 /** Backs the read_email tool. */
 export async function getInboxEmailById(id: string): Promise<InboxEmail | null> {
   const sql = getDb();

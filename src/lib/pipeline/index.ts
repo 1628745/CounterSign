@@ -7,11 +7,14 @@ export type Mode = "naive" | "guarded";
 
 export interface SubmitPaymentContext {
   runId: string;
+  pack: string;
 }
 
 export interface SubmitPaymentResult {
   paymentId: string;
   decision: string;
+  /** Short, rule-free message for the agent's tool result (SPEC.md section 9). */
+  message: string;
   signature?: string;
   explorerUrl?: string;
 }
@@ -19,8 +22,7 @@ export interface SubmitPaymentResult {
 /**
  * The one door the agent is allowed to knock on. Routes:
  *   naive   -> records the payment (decision naive_paid) and pays immediately
- *   guarded -> src/lib/countersign/gateway.submitToGateway (not implemented
- *              until the policy/gateway prompt)
+ *   guarded -> src/lib/countersign/gateway.submitToGateway
  * This is the ONLY pipeline interface the agent may import (SPEC.md
  * section 3 and non-negotiable #1) — it never imports the signer itself.
  */
@@ -30,7 +32,15 @@ export async function submitPayment(
   context: SubmitPaymentContext,
 ): Promise<SubmitPaymentResult> {
   if (mode === "guarded") {
-    throw new Error("TODO: guarded mode pipeline routing — implemented in the policy/gateway prompt (see SPEC.md section 3)");
+    const { submitToGateway } = await import("@/lib/countersign/gateway");
+    const result = await submitToGateway(intent, { runId: context.runId, pack: context.pack });
+    return {
+      paymentId: result.paymentId,
+      decision: result.decision,
+      message: result.message,
+      signature: result.signature,
+      explorerUrl: result.explorerUrl,
+    };
   }
 
   const paymentId = await insertPayment({
@@ -70,5 +80,5 @@ export async function submitPayment(
     payload: { signature, explorerUrl },
   });
 
-  return { paymentId, decision: "naive_paid", signature, explorerUrl };
+  return { paymentId, decision: "naive_paid", message: "paid", signature, explorerUrl };
 }

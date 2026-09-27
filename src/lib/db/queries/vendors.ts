@@ -55,6 +55,21 @@ export async function findVendorByName(name: string): Promise<VendorRow | null> 
   return partial[0] ? mapVendor(partial[0]) : null;
 }
 
+/** Every vendor with its current (possibly poisoned) payout address — backs provenance's registry check and payeeUnverified. */
+export async function listVendorsWithNotes(): Promise<VendorWithPayout[]> {
+  const sql = getDb();
+  const rows = await sql<(VendorDbRow & { payout_address: string; updated_at: Date; updated_from_email: string | null })[]>`
+    SELECT v.*, vn.payout_address, vn.updated_at, vn.updated_from_email
+    FROM vendors v JOIN vendor_notes vn ON vn.vendor_id = v.id
+  `;
+  return rows.map((row) => ({
+    ...mapVendor(row),
+    payoutAddress: row.payout_address,
+    notesUpdatedAt: row.updated_at,
+    notesUpdatedFromEmail: row.updated_from_email,
+  }));
+}
+
 /** Reads from vendors + vendor_notes (SPEC.md section 5) — backs the get_vendor tool. */
 export async function getVendorByName(name: string): Promise<VendorWithPayout | null> {
   const vendor = await findVendorByName(name);

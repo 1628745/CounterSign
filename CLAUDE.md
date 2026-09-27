@@ -33,7 +33,7 @@ npm run db:seed          # seed vendors + ~90 days history + E1-E8 inbox; refres
 npm run chain:setup      # idempotent — run 1 generates wallets + waits for faucet funding, run 2 mints
 npm run chain:balances   # print SOL + mUSDC for all six demo wallets
 npm run demo:reset       # sweep mUSDC to treasury, clear non-history rows, refresh caggs
-npm run agent -- --mode naive --pack demo   # colorized trace + summary table; guarded mode throws until Prompt 5
+npm run agent -- --mode naive|guarded --pack demo   # colorized trace + summary table (score/decision/top-reason cols in guarded)
 npm run eval              # score both modes against expected outcomes
 npm run shots             # capture demo screenshots (UI prompts)
 ```
@@ -44,10 +44,12 @@ npm run shots             # capture demo screenshots (UI prompts)
 src/app/                 routes + API routes (App Router)
 src/components/          UI components (Prompt 7+)
 src/lib/agent/           AP agent — SPEC.md §7. Imports ONLY src/lib/pipeline.
-src/lib/pipeline/        submitPayment(intent, mode) — naive -> signer (live), guarded -> gateway (TODO). §3
+src/lib/pipeline/        submitPayment(intent, mode) — naive -> signer, guarded -> gateway. §3
 src/lib/runs/            startRun() — creates a runs row, drives the agent, async-iterator of events. §3,§10
-src/lib/countersign/     gateway.ts, policy.ts (pure), signals/*.ts, provenance/hiddenText/
-                         lookalike/classifier.ts. §3, §8
+src/lib/countersign/     gateway.ts, policy.ts (pure), approvals.ts (advancePendingApprovals,
+                         shared by the API + CLI), signals/*.ts (12), provenance.ts, htmlText.ts
+                         (shared naive renderer w/ hidden-span offsets), hiddenText/lookalike/
+                         pressure/execImpersonation/classifier.ts detectors. §3, §8
 src/lib/auth0/           client.ts (Auth0Client), session.ts, ciba.ts. §9
 src/proxy.ts             Next 16 proxy — protects every route except /api/health. §9
 src/lib/solana/          connection/wallets/signer/balances/memo/explorer.ts.

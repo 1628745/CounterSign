@@ -10,6 +10,7 @@ import { createTransferCheckedInstruction, getAccount, getAssociatedTokenAddress
 import bs58 from "bs58";
 import { getLatestApprovalForPayment } from "@/lib/db/queries/approvals";
 import { getPaymentById } from "@/lib/db/queries/payments";
+import { emitEvent } from "@/lib/runs/eventBus";
 import { getConnection } from "./connection";
 import { buildMemo } from "./memo";
 
@@ -98,6 +99,18 @@ export async function executePayment(paymentId: string): Promise<{ signature: st
     throw new Error(`No payment found for id ${paymentId}`);
   }
 
+  async function refuse(reason: string): Promise<never> {
+    if (payment && payment.runId) {
+      await emitEvent({
+        runId: payment.runId,
+        kind: "error",
+        paymentId,
+        payload: { tool: "signer.executePayment", refused: true, reason },
+      });
+    }
+    throw new Error(`Refusing to pay ${paymentId}: ${reason}`);
+  }
+
   let authReqId: string | undefined;
   if (payment.mode === "naive") {
     // Naive mode bypasses the gateway entirely — no decision gate.
@@ -105,14 +118,12 @@ export async function executePayment(paymentId: string): Promise<{ signature: st
     // ok
   } else if (payment.decision === "approved") {
     const approval = await getLatestApprovalForPayment(paymentId);
-    if (!approval || approval.status !== "approved") {
-      throw new Error(`Payment ${paymentId} decision is 'approved' but no verified approval record was found`);
+    if (!approval || approval.status !== "approved" || !approval.tokenFingerprint) {
+      await refuse("decision is 'approved' but no stored, verified approval record (with a token fingerprint) was found");
     }
-    authReqId = approval.authReqId;
+    authReqId = approval!.authReqId;
   } else {
-    throw new Error(
-      `Refusing to pay ${paymentId}: decision is '${payment.decision}' (must be auto_pay, approved with a verified approval, or mode=naive)`,
-    );
+    await refuse(`decision is '${payment.decision}' (must be auto_pay, approved with a verified approval, or mode=naive)`);
   }
 
   const connection = getConnection();

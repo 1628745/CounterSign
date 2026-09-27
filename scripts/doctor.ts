@@ -476,6 +476,33 @@ async function checkAgentDryRun(): Promise<void> {
   }
 }
 
+/**
+ * Policy self-test: evaluates the E1-E8 scenarios entirely offline —
+ * hand-constructed PolicyContext fixtures, no Tiger Data, no model call
+ * (evaluate() is pure). Same fixtures tests/policy.test.ts uses, so a
+ * regression shows up in both `npm test` and `npm run doctor`.
+ */
+async function checkPolicySelfTest(): Promise<void> {
+  try {
+    const { evaluate } = await import("../src/lib/countersign/policy");
+    const { SCENARIOS } = await import("../tests/fixtures/policyScenarios");
+    const failures: string[] = [];
+    for (const scenario of SCENARIOS) {
+      const result = evaluate(scenario.intent, scenario.context);
+      if (result.decision !== scenario.expectedDecision) {
+        failures.push(`${scenario.name} — expected ${scenario.expectedDecision}, got ${result.decision} (score ${result.score})`);
+      }
+    }
+    report(
+      failures.length === 0 ? "PASS" : "FAIL",
+      `Policy self-test (${SCENARIOS.length} E1-E8 scenarios, offline)`,
+      failures.length === 0 ? undefined : failures.join("; "),
+    );
+  } catch (error) {
+    report("FAIL", "Policy self-test", error instanceof Error ? error.message : String(error));
+  }
+}
+
 async function main(): Promise<void> {
   console.log("Countersign doctor\n");
 
@@ -504,6 +531,7 @@ async function main(): Promise<void> {
   await checkTigerData();
   await checkSolana();
   await checkAgentDryRun();
+  await checkPolicySelfTest();
 
   console.log(`\n${failCount === 0 ? "All required checks passed." : `${failCount} check(s) failed.`}`);
   process.exit(failCount === 0 ? 0 : 1);

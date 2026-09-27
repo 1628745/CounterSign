@@ -1,6 +1,6 @@
-import { load } from "cheerio";
 import { tool } from "ai";
 import { z } from "zod";
+import { renderNaiveEmail } from "@/lib/countersign/htmlText";
 import type { PaymentIntent } from "@/lib/countersign/types";
 import { getInboxEmailById, listInboxEmails } from "@/lib/db/queries/emails";
 import { lookupPaymentHistory } from "@/lib/db/queries/payments";
@@ -34,25 +34,6 @@ export interface AgentToolContext {
 
 function formatDollars(micros: bigint): string {
   return `$${(Number(micros) / 1_000_000).toFixed(2)}`;
-}
-
-/**
- * Naive HTML-to-text: cheerio's plain .text() walks every text node
- * regardless of CSS (display:none, visibility:hidden, etc.), which is
- * exactly the point — read_email must surface hidden spans, "like a naive
- * HTML-to-text step" (SPEC.md section 7). The block-tag line breaks are
- * only for legibility; they don't change what text is included.
- */
-function naiveHtmlToText(html: string): string {
-  const $ = load(html);
-  $("br").replaceWith("\n");
-  $("p, div, tr, table, hr, li").each((_, el) => {
-    $(el).after("\n");
-  });
-  return $.root()
-    .text()
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
 }
 
 /**
@@ -148,7 +129,7 @@ export function buildAgentTools(ctx: AgentToolContext) {
           if (!email) {
             throw new Error(`No email with id "${input.id}"`);
           }
-          const text = naiveHtmlToText(email.html);
+          const { text } = renderNaiveEmail(email.html);
           if (!ctx.simulate) {
             await emitEvent({
               runId: ctx.runId,
@@ -274,10 +255,11 @@ export function buildAgentTools(ctx: AgentToolContext) {
               invoiceNumber: input.invoice_number ?? null,
             },
           });
-          const result = await submitPayment(intent, ctx.mode, { runId: ctx.runId });
+          const result = await submitPayment(intent, ctx.mode, { runId: ctx.runId, pack: ctx.pack });
           return {
             paymentId: result.paymentId,
             decision: result.decision,
+            message: result.message,
             signature: result.signature,
             explorerUrl: result.explorerUrl,
           };

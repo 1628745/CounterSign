@@ -18,7 +18,7 @@ export async function finishRun(runId: string, summary: string | null, stats: Re
   const sql = getDb();
   const status = "error" in stats ? "failed" : "completed";
   await sql`
-    UPDATE runs SET finished_at = now(), status = ${status}, summary = ${summary}, stats = ${JSON.stringify(stats)}::jsonb
+    UPDATE runs SET finished_at = now(), status = ${status}, summary = ${summary}, stats = ${sql.json(JSON.parse(JSON.stringify(stats)))}
     WHERE id = ${runId}
   `;
 }

@@ -46,7 +46,7 @@ export async function appendEvent(event: AgentEventInput): Promise<{ seq: bigint
       INSERT INTO agent_events (run_id, seq, kind, email_id, payment_id, payload)
       VALUES (
         ${event.runId}, ${nextSeq}, ${event.kind},
-        ${event.emailId ?? null}, ${event.paymentId ?? null}, ${JSON.stringify(event.payload)}::jsonb
+        ${event.emailId ?? null}, ${event.paymentId ?? null}, ${tx.json(JSON.parse(JSON.stringify(event.payload)))}
       )
     `;
     return BigInt(nextSeq);

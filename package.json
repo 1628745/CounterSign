@@ -20,6 +20,9 @@
     "eval": "tsx scripts/eval.ts",
     "shots": "tsx scripts/shots.ts"
   },
+  "overrides": {
+    "rpc-websockets": "9.3.0"
+  },
   "dependencies": {
     "@ai-sdk/anthropic": "^2.0.106",
     "@auth0/nextjs-auth0": "^4.30.0",

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { createRemoteJWKSet, jwtVerify, type JWTPayload } from "jose";
 
 export type CibaStatus = "pending" | "approved" | "denied" | "expired";
@@ -14,6 +15,8 @@ export interface PollOutcome {
   intervalS?: number;
   /** Only present when status === "approved". */
   claims?: JWTPayload;
+  /** sha256 of the raw verified access token — stored, never the token itself. Only present when status === "approved". */
+  tokenFingerprint?: string;
 }
 
 interface TokenErrorBody {
@@ -162,5 +165,6 @@ export async function poll(authReqId: string, expectedSub: string | undefined = 
     return outcome;
   }
   const claims = await verifyAccessToken(body.access_token, expectedSub);
-  return { ...outcome, claims };
+  const tokenFingerprint = createHash("sha256").update(body.access_token as string).digest("hex");
+  return { ...outcome, claims, tokenFingerprint };
 }

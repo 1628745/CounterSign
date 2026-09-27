@@ -1,11 +1,15 @@
 #!/usr/bin/env tsx
 // npm run agent -- --mode naive|guarded --pack demo — runs the AP agent
-// from the terminal with a readable, colorized one-line-per-event trace,
-// ending with a summary table (SPEC.md sections 7, 10, 12).
+// from the terminal with a readable, colorized one-line-per-event trace.
+// In guarded mode, once the agent finishes, polls
+// advancePendingApprovals() every 2s and prints state changes until every
+// approval is resolved or expired. Ends with a summary table (SPEC.md
+// sections 7, 9, 10, 12) — decision/score/top-reason columns in guarded mode.
 
 import { config } from "dotenv";
 config({ path: ".env.local" });
 
+import { advancePendingApprovals } from "../src/lib/countersign/approvals";
 import { getDb } from "../src/lib/db/client";
 import type { Mode } from "../src/lib/pipeline";
 import { startRun } from "../src/lib/runs";
@@ -48,6 +52,17 @@ const KIND_COLOR: Record<string, keyof typeof COLORS> = {
   error: "red",
 };
 
+const STATUS_COLOR: Record<string, keyof typeof COLORS> = {
+  pending: "yellow",
+  approved: "green",
+  denied: "red",
+  expired: "red",
+};
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function parseArgs(argv: string[]): { mode: string; pack: string } {
   let mode = "naive";
   let pack = "demo";
@@ -70,6 +85,42 @@ function formatEvent(event: PersistedEvent, startedAt: number): string {
   return `${color("dim", `[${elapsed}s]`)} ${kind} ${formatPayload(event.payload)}`;
 }
 
+async function countPendingApprovalsForRun(runId: string): Promise<number> {
+  const sql = getDb();
+  const rows = await sql<{ count: string }[]>`
+    SELECT count(*) FROM approvals a
+    JOIN payments p ON p.payment_id = a.payment_id
+    WHERE p.run_id = ${runId} AND a.status = 'pending'
+  `;
+  return Number(rows[0]?.count ?? 0);
+}
+
+/**
+ * Guarded-mode wait loop: while any approval for this run is still
+ * pending, calls the shared advancePendingApprovals() every 2s and prints
+ * each state change, until every approval is resolved or expired.
+ */
+async function waitForApprovals(runId: string, startedAt: number): Promise<void> {
+  const lastStatus = new Map<string, string>();
+
+  while (true) {
+    const pending = await countPendingApprovalsForRun(runId);
+    if (pending === 0) return;
+
+    const advances = await advancePendingApprovals();
+    for (const advance of advances) {
+      if (lastStatus.get(advance.approvalId) === advance.status) continue;
+      lastStatus.set(advance.approvalId, advance.status);
+      const elapsed = ((Date.now() - startedAt) / 1000).toFixed(2).padStart(6, " ");
+      const statusColor = STATUS_COLOR[advance.status] ?? "reset";
+      const sigPart = advance.signature ? ` ${explorerTxUrl(advance.signature)}` : "";
+      console.log(`${color("dim", `[${elapsed}s]`)} ${color("magenta", "approval_poll".padEnd(18))} ${advance.paymentId.slice(0, 8)} -> ${color(statusColor, advance.status)}${sigPart}`);
+    }
+
+    await sleep(2000);
+  }
+}
+
 async function main(): Promise<void> {
   const { mode, pack } = parseArgs(process.argv.slice(2));
   if (mode !== "naive" && mode !== "guarded") {
@@ -90,7 +141,16 @@ async function main(): Promise<void> {
   const outcome = await handle.done;
   console.log(`\n${color("bold", "Result:")} ${outcome.status} — ${outcome.summary ?? "(no summary)"}\n`);
 
-  await printSummaryTable(handle.runId, pack);
+  if (mode === "guarded") {
+    const pendingAtStart = await countPendingApprovalsForRun(handle.runId);
+    if (pendingAtStart > 0) {
+      console.log(color("bold", `Waiting for ${pendingAtStart} approval(s) — check your phone for the Guardian push.\n`));
+      await waitForApprovals(handle.runId, startedAt);
+      console.log("");
+    }
+  }
+
+  await printSummaryTable(handle.runId, pack, mode as Mode);
 
   const sql = getDb();
   await sql.end();
@@ -110,6 +170,7 @@ interface PaymentRow {
   payee_address: string;
   amount_micros: string;
   decision: string;
+  risk_score: number | null;
   tx_signature: string | null;
 }
 
@@ -120,7 +181,12 @@ interface VendorChangeRow {
   new_address: string;
 }
 
-async function printSummaryTable(runId: string, pack: string): Promise<void> {
+interface RiskEvalRow {
+  payment_id: string;
+  signals: { label: string; weight: number; fired: boolean }[];
+}
+
+async function printSummaryTable(runId: string, pack: string, mode: Mode): Promise<void> {
   const sql = getDb();
   const wallets = loadWalletDirectory();
   const flat = flattenWalletDirectory(wallets);
@@ -139,15 +205,19 @@ async function printSummaryTable(runId: string, pack: string): Promise<void> {
     SELECT id, "position", subject FROM inbox_emails WHERE pack = ${pack} ORDER BY "position" ASC
   `;
   const payments = await sql<PaymentRow[]>`
-    SELECT payment_id, source_email_id, vendor_id, payee_address, amount_micros, decision, tx_signature
+    SELECT payment_id, source_email_id, vendor_id, payee_address, amount_micros, decision, risk_score, tx_signature
     FROM payments WHERE run_id = ${runId} ORDER BY ts ASC
   `;
   const vendorChanges = await sql<VendorChangeRow[]>`
     SELECT source_email_id, vendor_id, old_address, new_address FROM vendor_detail_changes WHERE run_id = ${runId} ORDER BY ts ASC
   `;
+  const riskEvals =
+    mode === "guarded"
+      ? await sql<RiskEvalRow[]>`SELECT DISTINCT ON (payment_id) payment_id, signals FROM risk_evaluations WHERE run_id = ${runId} ORDER BY payment_id, ts DESC`
+      : [];
 
   console.log(color("bold", "Summary"));
-  console.log("-".repeat(100));
+  console.log("-".repeat(110));
 
   let totalStolenMicros = 0n;
   for (const email of emails) {
@@ -160,12 +230,31 @@ async function printSummaryTable(runId: string, pack: string): Promise<void> {
       const dollars = `$${(Number(amountMicros) / 1_000_000).toFixed(2)}`;
       const destination = labelFor(payment.payee_address);
       const isAttacker = attackerAddresses.has(payment.payee_address);
-      if (isAttacker) totalStolenMicros += amountMicros;
-      const link = payment.tx_signature ? explorerTxUrl(payment.tx_signature) : "(no tx)";
+      const paid = payment.tx_signature !== null;
+      if (isAttacker && paid) totalStolenMicros += amountMicros;
       const flag = isAttacker ? color("red", " <-- ATTACKER") : "";
-      action = `paid ${dollars} -> ${destination}${flag}  ${link}`;
+
+      if (paid) {
+        action = `paid ${dollars} -> ${destination}${flag}  ${explorerTxUrl(payment.tx_signature!)}`;
+      } else if (payment.decision === "blocked") {
+        action = `blocked (${dollars} -> ${destination}${flag})`;
+      } else if (payment.decision === "denied") {
+        action = `denied on approval — no payment (${dollars} -> ${destination}${flag})`;
+      } else if (payment.decision === "expired") {
+        action = `approval expired — no payment (${dollars} -> ${destination}${flag})`;
+      } else {
+        action = `${payment.decision} — no payment yet (${dollars} -> ${destination}${flag})`;
+      }
+
+      if (mode === "guarded") {
+        const risk = riskEvals.find((r) => r.payment_id === payment.payment_id);
+        const topSignal = risk?.signals.filter((s) => s.fired).sort((a, b) => b.weight - a.weight)[0];
+        const scoreCol = payment.risk_score != null ? `score=${payment.risk_score}` : "score=n/a";
+        const reasonCol = topSignal ? `top_reason="${topSignal.label}"` : "top_reason=none";
+        action += `\n     ${color("dim", `decision=${payment.decision} ${scoreCol} ${reasonCol}`)}`;
+      }
     } else if (vendorChange) {
-      action = `updated vendor "${vendorChange.vendor_id}" payout: ${labelFor(vendorChange.old_address ?? "")} -> ${labelFor(vendorChange.new_address)}`;
+      action = `updated vendor "${vendorChange.vendor_id}" payout: ${labelFor(vendorChange.old_address ?? "")} -> ${labelFor(vendorChange.new_address)} (recorded as UNVERIFIED)`;
     } else {
       action = "(no payment, no vendor change)";
     }
@@ -174,7 +263,7 @@ async function printSummaryTable(runId: string, pack: string): Promise<void> {
     console.log(`     ${action}`);
   }
 
-  console.log("-".repeat(100));
+  console.log("-".repeat(110));
   console.log(color("bold", `Total stolen (sent to attacker wallets): $${(Number(totalStolenMicros) / 1_000_000).toFixed(2)}`));
 }
 
