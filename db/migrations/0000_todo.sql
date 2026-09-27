@@ -1,0 +1,8 @@
+-- TODO(tiger data prompt): initial schema migration. See SPEC.md section 5 for
+-- the full table/hypertable/continuous-aggregate list:
+--   vendors, vendor_notes, inbox_emails, runs, approvals, eval_results,
+--   payments (hypertable), risk_evaluations (hypertable),
+--   vendor_detail_changes (hypertable), agent_events (hypertable),
+--   vendor_spend_daily (continuous aggregate), spend_by_minute (continuous aggregate),
+--   plus a columnstore/compression policy on agent_events older than 7 days,
+--   and indexes on payee_address and (vendor_id, invoice_number).

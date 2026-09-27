@@ -1,0 +1,5 @@
+{
+  "pack": "demo",
+  "_todo": "Populate with the E1-E8 inbox from SPEC.md section 2 as realistic HTML emails (scenario-building prompt).",
+  "emails": []
+}
