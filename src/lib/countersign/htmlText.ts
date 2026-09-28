@@ -131,3 +131,65 @@ export function renderNaiveEmail(html: string): RenderedEmail {
 
   return { text: trimmedText, hiddenSpans: adjustedSpans };
 }
+
+function escapeHtmlText(value: string): string {
+  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+/**
+ * Mission Control's document viewer (docs/DESIGN.md section A8): the agent's
+ * naive read_email/renderNaiveEmail above is untouched by this function —
+ * this is a second, purely additive rendering for a human viewer. Marks
+ * every element that would be hidden from a person with
+ * `data-cs-hidden="<reason>"` (same reasons ownHiddenReason already computes)
+ * so the client can render the email as an attacker actually sent it, then
+ * reveal exactly those nodes on toggle — without stripping or altering
+ * anything else in the markup DOMPurify will sanitize downstream.
+ */
+export function annotateHiddenHtml(html: string): string {
+  const $ = load(html);
+
+  function wrapZeroWidth(textNode: AnyNode): void {
+    const data = (textNode as unknown as { data: string }).data;
+    if (!ZERO_WIDTH_RE.test(data)) return;
+    const re = new RegExp(ZERO_WIDTH_RE);
+    let last = 0;
+    let out = "";
+    let match: RegExpExecArray | null;
+    while ((match = re.exec(data))) {
+      out += escapeHtmlText(data.slice(last, match.index));
+      out += `<span data-cs-hidden="zero-width-chars">${escapeHtmlText(match[0])}</span>`;
+      last = match.index + match[0].length;
+    }
+    out += escapeHtmlText(data.slice(last));
+    $(textNode).replaceWith(out);
+  }
+
+  function walk(node: AnyNode, inheritedHidden: HiddenReason | null): void {
+    if (node.type === "text") {
+      if (!inheritedHidden) wrapZeroWidth(node);
+      return;
+    }
+    if (node.type !== "tag") return;
+    const el = node as unknown as { name: string; attribs?: Record<string, string>; children: AnyNode[] };
+    if (el.name === "script" || el.name === "style") return;
+
+    const ownReason = ownHiddenReason(el.attribs?.style);
+    if (!inheritedHidden && ownReason) {
+      $(node).attr("data-cs-hidden", ownReason);
+      return;
+    }
+    for (const child of [...(el.children ?? [])]) {
+      walk(child, inheritedHidden ?? ownReason);
+    }
+  }
+
+  const root = $.root().get(0);
+  if (root) {
+    for (const child of [...((root as unknown as { children: AnyNode[] }).children ?? [])]) {
+      walk(child, null);
+    }
+  }
+
+  return $("body").html() ?? "";
+}

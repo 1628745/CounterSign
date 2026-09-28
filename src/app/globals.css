@@ -1,26 +1,103 @@
 @import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
 
+@custom-variant dark (&:is(.dark *));
+
+/*
+ * Countersign — "security paper" tokens (docs/DESIGN.md Part A1-A3).
+ * Light theme only; there is no .dark variant for the product surface.
+ */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --cs-paper: #edf1ec;
+  --cs-sheet: #fbfcfa;
+  --cs-ink: #1b2a41;
+  --cs-ink-faded: #5b6b7f;
+  --cs-rule: #c9d6cc;
+  --cs-signature: #2342a8;
+  --cs-paid: #2f6b4f;
+  --cs-held: #8f6214;
+  --cs-void: #b3261e;
+
+  /* Risk-bar family tints (docs/DESIGN.md A9) — muted, distinct from stamp inks. */
+  --cs-family-provenance: #6b5b95;
+  --cs-family-history: #3d7a8a;
+  --cs-family-content: #9a6a3c;
+
+  /* shadcn/Base UI semantic mapping onto the tokens above. */
+  --background: var(--cs-paper);
+  --foreground: var(--cs-ink);
+  --card: var(--cs-sheet);
+  --card-foreground: var(--cs-ink);
+  --popover: var(--cs-sheet);
+  --popover-foreground: var(--cs-ink);
+  --primary: var(--cs-signature);
+  --primary-foreground: var(--cs-sheet);
+  --secondary: var(--cs-sheet);
+  --secondary-foreground: var(--cs-ink);
+  --muted: #e3e9e2;
+  --muted-foreground: var(--cs-ink-faded);
+  --accent: #e3e9e2;
+  --accent-foreground: var(--cs-ink);
+  --destructive: var(--cs-void);
+  --border: var(--cs-rule);
+  --input: var(--cs-rule);
+  --ring: var(--cs-signature);
+  --radius: 0.375rem;
+
+  --font-display: var(--font-libre-franklin);
+  --font-doc: var(--font-source-serif);
+  --font-address: var(--font-fragment-mono);
+  --font-script: var(--font-saint-delafield);
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --font-sans: var(--font-display);
+  --font-mono: var(--font-address);
+  --font-heading: var(--font-display);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --radius-sm: 2px;
+  --radius-md: 6px;
+  --radius-lg: 6px;
+  --radius-xl: 16px;
+  --radius-2xl: 16px;
+  --radius-3xl: 16px;
+  --radius-4xl: 16px;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+  html {
+    @apply font-sans;
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+@layer utilities {
+  /* Tabular figures for every amount, timestamp and count (docs/DESIGN.md A2). */
+  .cs-tabular {
+    font-feature-settings: "tnum" 1;
+    font-variant-numeric: tabular-nums;
+  }
 }
